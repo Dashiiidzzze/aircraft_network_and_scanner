@@ -1,0 +1,73 @@
+version: '3.9'
+
+services:
+  sensors:
+    build: ./sensors
+    networks:
+      - network_critical
+    ports:
+      - "5000:5000/udp"
+    read_only: true
+    restart: always
+
+  controllers:
+    build: ./controllers
+    networks:
+      - network_critical
+    ports:
+      - "5001:5001/udp"
+      - "8080:8080"
+    read_only: true
+    restart: always
+
+  actuators:
+    build: ./actuators
+    networks:
+      - network_critical
+    ports:
+      - "5002:5002/udp"
+    read_only: true
+    restart: always
+
+  pilot_interface:
+    build: ./pilot_interface
+    networks:
+      - network_critical
+    ports:
+      - "5003:5003/udp"
+      - "8081:8081"
+    restart: always
+
+  avionics:
+    build: ./avionics
+    networks:
+      - network_critical
+    ports:
+      - "5004:5004/udp"
+      - "8082:8082"
+    restart: always
+
+  secure_gateway:
+    build: ./secure_gateway
+    networks:
+      - network_critical
+      - network_info
+    ports:
+      - "8083:8083"
+    restart: always
+
+  crew_communication:
+    build: ./crew_communication
+    networks:
+      - network_info
+    ports:
+      - "8084:8084"
+    restart: always
+
+networks:
+  network_critical:
+    driver: bridge
+    name: critical_net
+  network_info:
+    driver: bridge
+    name: info_net
