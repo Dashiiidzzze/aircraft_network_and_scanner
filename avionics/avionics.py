@@ -1,15 +1,13 @@
-# avionics.py
 # Модуль авионики: приём телеметрии от контроллеров (UDP) и передача данных в безопасный шлюз (HTTP)
 
 import socket        # Для UDP-приёма
-import json          # Для обработки сообщений
+import json
 import requests      # Для HTTP-отправки в безопасный шлюз
 
-# --- Конфигурация ---
 UDP_PORT = 5004                              # Порт для приёма от контроллеров
-GATEWAY_URL = "http://secure_gateway:8083/ingest"  # URL безопасного шлюза
+GATEWAY_URL = "http://firewall.critical.local:8083/ingest"  # URL безопасного шлюза
 
-# --- Получение и передача данных ---
+# Получение и передача данных
 def main():
     # Инициализация UDP-сокета
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -36,6 +34,5 @@ def main():
         except requests.exceptions.RequestException as e:
             print(f"[Avionics] Ошибка связи с шлюзом: {e}")
 
-# Точка входа
 if __name__ == "__main__":
     main()

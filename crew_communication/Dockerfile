@@ -1,8 +1,5 @@
-# Dockerfile
-# Контейнер системы связи экипажа
-
-FROM python:3.10-slim
-
+#FROM python:3.10-slim
+FROM python:latest
 WORKDIR /app
 
 RUN pip install flask

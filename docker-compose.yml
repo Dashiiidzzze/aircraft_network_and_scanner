@@ -3,71 +3,555 @@ version: '3.9'
 services:
   sensors:
     build: ./sensors
+    privileged: true  # ← уязвимость
+    pid: "host"  # ← уязвимость
     networks:
-      - network_critical
-    ports:
-      - "5000:5000/udp"
+      critical_internal:
+        aliases:
+          - sensors.critical.local
+    # ports:
+    #   - "5000:5000/udp"
+    expose:
+      - "5000/udp"
     read_only: true
-    restart: always
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    #restart: always
 
   controllers:
     build: ./controllers
+    #network_mode: "host"  # ← уязвимость
     networks:
-      - network_critical
-    ports:
-      - "5001:5001/udp"
-      - "8080:8080"
+      critical_internal:
+        aliases:
+          - controllers.critical.local
+    # ports:
+    #   - "5001:5001/udp"
+    #   - "8080:8080"
+    expose:
+      - "5001/udp"
+      - "8080"
     read_only: true
-    restart: always
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /proc:/host_proc  # ← уязвимость
+      - /var/run/docker.sock:/var/run/docker.sock  # ← особенно опасно
+    #restart: always
 
   actuators:
     build: ./actuators
+    ipc: "host"  # ← уязвимость
     networks:
-      - network_critical
-    ports:
-      - "5002:5002/udp"
+      critical_internal:
+        aliases:
+          - actuators.critical.local
+    # ports:
+    #   - "5002:5002/udp"
+    expose:
+      - "5002/udp"
     read_only: true
-    restart: always
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    #restart: always
 
   pilot_interface:
     build: ./pilot_interface
     networks:
-      - network_critical
-    ports:
-      - "5003:5003/udp"
-      - "8081:8081"
-    restart: always
+      critical_internal:
+        aliases:
+          - pilot.critical.local
+      info_internal:
+        aliases:
+          - pilot_interface.info.local
+    # ports:
+    #   - "5003:5003/udp"
+    #   - "8081:8081"
+    expose:
+      - "5003/udp"
+      - "8081"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    #restart: always
 
   avionics:
     build: ./avionics
     networks:
-      - network_critical
-    ports:
-      - "5004:5004/udp"
-      - "8082:8082"
+      critical_internal:
+        ipv4_address: 10.10.1.7
+        aliases:
+          - avionics.critical.local
+    # ports:
+    #   - "5004:5004/udp"
+    #   - "8082:8082"
+    expose:
+      - "5004/udp"
+      - "8082"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+    - no-new-privileges:true
+    #restart: always
+
+  firewall:
+    build:
+      context: ./firewalls/critical
+      dockerfile: Dockerfile
+    networks:
+      critical_internal:
+        ipv4_address: 10.10.1.8
+        aliases:
+          - firewall.critical.local
+      info_internal:
+        ipv4_address: 10.10.4.8
+        aliases:
+          - firewall.info.local
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./firewalls/critical/critical.rules:/rules.v4:ro
     restart: always
 
   secure_gateway:
     build: ./secure_gateway
     networks:
-      - network_critical
-      - network_info
+      info_internal:
+        ipv4_address: 10.10.4.9
+        aliases:
+          - gateway.info.local
     ports:
       - "8083:8083"
-    restart: always
+    # expose:
+    #   - "8083"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    #restart: always
 
   crew_communication:
     build: ./crew_communication
     networks:
-      - network_info
+      info_internal:
+        ipv4_address: 10.10.4.10
+        aliases:
+          - crew.info.local
     ports:
       - "8084:8084"
-    restart: always
+    # expose:
+    #   - "8084"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    #restart: always
 
 networks:
-  network_critical:
+  #Полностью изолированная внутренняя сеть критического домена
+  critical_internal:
     driver: bridge
-    name: critical_net
-  network_info:
+    internal: true
+    name: critical_internal
+    ipam:
+      config:
+        - subnet: 10.10.1.0/24
+
+  # Внутренняя сеть информационного домена
+  info_internal:
     driver: bridge
-    name: info_net
+    internal: true
+    name: info_internal
+    ipam:
+      config:
+        - subnet: 10.10.4.0/24
+
+
+  # network_critical:
+  #   driver: bridge
+  #   name: critical_net
+  # network_info:
+  #   driver: bridge
+  #   name: info_net
+
+# # version: '3.9'
+
+# # services:
+# #   # КРИТИЧЕСКИЙ ДОМЕН
+# #   sensors:
+# #     build: ./sensors
+# #     networks:
+# #       critical_internal:
+# #         aliases:
+# #           - sensors.critical.local
+# #     expose:
+# #       - "5000/udp"    # Только внутренние порты, без публикации
+# #     read_only: true
+# #     restart: always
+# #     security_opt:
+# #       - no-new-privileges:true
+# #     cap_drop:
+# #       - ALL
+# #     cap_add:
+# #       - NET_BIND_SERVICE
+# #     #volumes:
+# #     #  - ./certs/sensors:/certs:ro    # Монтирование сертификатов только для чтения
+# #     environment:
+# #       - UDP_SECRET_KEY=${UDP_SECRET_KEY}
+# #       - TZ=UTC
+# #       # - CERT_PATH=/certs/sensors.crt
+# #       # - KEY_PATH=/certs/sensors.key
+# #       # - CA_PATH=/certs/ca.crt
+# #     # healthcheck:
+# #     #   test: ["CMD", "nc", "-uz", "localhost", "5000"]
+# #     #   interval: 30s
+# #     #   timeout: 10s
+# #     #   retries: 3
+
+# #   controllers:
+# #     build: ./controllers
+# #     networks:
+# #       critical_internal:
+# #         aliases:
+# #           - controllers.critical.local
+# #     expose:
+# #       - "5001/udp"    # UDP для минимальной задержки
+# #       - "8080"        # HTTP для структурированных данных
+# #     read_only: true
+# #     restart: always
+# #     security_opt:
+# #       - no-new-privileges:true
+# #     cap_drop:
+# #       - ALL
+# #     cap_add:
+# #       - NET_BIND_SERVICE
+# #     volumes:
+# #       - ./certs/controllers:/certs:ro
+# #       - ./certs/ca.crt:/certs/
+# #     environment:
+# #       - UDP_SECRET_KEY=${UDP_SECRET_KEY}
+# #       - TZ=UTC
+# #       - CERT_PATH=../certs/controllers.crt
+# #       - KEY_PATH=../certs/controllers.key
+# #       - CA_PATH=../certs/ca.crt
+# #     # healthcheck:
+# #     #   test: ["CMD", "nc", "-uz", "localhost", "5001"]
+# #     #   interval: 30s
+# #     #   timeout: 10s
+# #     #   retries: 3
+
+# #   actuators:
+# #     build: ./actuators
+# #     networks:
+# #       critical_internal:
+# #         aliases:
+# #           - actuators.critical.local
+# #     expose:
+# #       - "5002/udp"    # Только внутренние порты
+# #     read_only: true
+# #     restart: always
+# #     security_opt:
+# #       - no-new-privileges:true
+# #     cap_drop:
+# #       - ALL
+# #     cap_add:
+# #       - NET_BIND_SERVICE
+# #     # volumes:
+# #     #   - ./certs/actuators:/certs:ro
+# #     environment:
+# #       - UDP_SECRET_KEY=${UDP_SECRET_KEY}
+# #       - TZ=UTC
+# #       # - CERT_PATH=/certs/actuators.crt
+# #       # - KEY_PATH=/certs/actuators.key
+# #       # - CA_PATH=/certs/ca.crt
+# #     # healthcheck:
+# #     #   test: ["CMD", "nc", "-uz", "localhost", "5002"]
+# #     #   interval: 30s
+# #     #   timeout: 10s
+# #     #   retries: 3
+
+# #   pilot_interface:
+# #     build: ./pilot_interface
+# #     networks:
+# #       critical_internal:
+# #         aliases:
+# #           - pilot.critical.local
+# #     expose:
+# #       - "5003/udp"    # UDP для данных реального времени
+# #       - "8081"        # HTTPS для команд
+# #     read_only: true
+# #     restart: always
+# #     security_opt:
+# #       - no-new-privileges:true
+# #     cap_drop:
+# #       - ALL
+# #     cap_add:
+# #       - NET_BIND_SERVICE
+# #     volumes:
+# #       - ./certs/pilot_interface:/certs:ro
+# #       - ./certs/ca.crt:/certs/
+# #     environment:
+# #       - PYTHONUNBUFFERED=1  # Вывод логов в реальном времени
+# #       - UDP_SECRET_KEY=${UDP_SECRET_KEY}
+# #       - TZ=UTC
+# #       - CERT_PATH=../certs/pilot_interface.crt
+# #       - KEY_PATH=../certs/pilot_interface.key
+# #       - CA_PATH=../certs/ca.crt
+# #     # healthcheck:
+# #     #   test: ["CMD", "nc", "-uz", "localhost", "5003"]
+# #     #   interval: 30s
+# #     #   timeout: 10s
+# #     #   retries: 3
+
+# #   # ПЕРЕХОДНЫЙ КОМПОНЕНТ (DMZ)
+# #   # critical_firewall:
+# #   #   build:
+# #   #     context: ./firewalls/critical
+# #   #     dockerfile: Dockerfile
+# #   #   # networks:
+# #   #   #   - critical_internal
+# #   #   #   - critical_dmz
+# #   #   networks:
+# #   #     critical_dmz:
+# #   #       ipv4_address: 10.10.2.10  # Уникальный IP для DMZ
+# #   #     critical_internal:
+# #   #       ipv4_address: 10.10.1.10  # Уникальный IP для internal
+# #   #   cap_add:
+# #   #     - NET_ADMIN  # Нужно для управления iptables
+# #   #   volumes:
+# #   #     - ./firewalls/critical/critical.rules:/rules.v4:ro  # Правила монтируются в контейнер
+# #   #   # restart: always
+# #   #   security_opt:
+# #   #     - no-new-privileges:true
+# #   #   depends_on:
+# #   #     - sensors
+# #   #     - controllers
+# #   #     - actuators
+# #   #     - pilot_interface
+# #   #     - avionics
+# #   #   # image: alpine/firewalld:latest 
+# #   #   # networks:
+# #   #   #   - critical_internal
+# #   #   #   - critical_dmz
+# #   #   # cap_add:
+# #   #   #   - NET_ADMIN
+# #   #   # volumes:
+# #   #   #   - ./firewall/critical_rules.conf:/etc/firewalld/critical_rules.conf:ro
+# #   #   # restart: always
+# #   #   # security_opt:
+# #   #   #   - no-new-privileges:true
+
+# #   avionics:
+# #     build: ./avionics
+# #     networks:
+# #       critical_internal:
+# #         aliases:
+# #           - avionics.critical.local
+# #       critical_dmz:
+# #         aliases:
+# #           - avionics.dmz.local
+# #     expose:
+# #       - "5004/udp"    # UDP для критических данных
+# #       - "8082"        # HTTPS для менее критических данных
+# #     read_only: true
+# #     restart: always
+# #     security_opt:
+# #       - no-new-privileges:true
+# #     cap_drop:
+# #       - ALL
+# #     cap_add:
+# #       - NET_BIND_SERVICE
+# #     volumes:
+# #       - ./certs/avionics:/certs:ro
+# #       - ./certs/ca.crt:/certs/
+# #     environment:
+# #       - PYTHONUNBUFFERED=1  # Вывод логов в реальном времени
+# #       - UDP_SECRET_KEY=${UDP_SECRET_KEY}
+# #       - TZ=UTC
+# #       - CERT_PATH=../certs/avionics.crt
+# #       - KEY_PATH=../certs/avionics.key
+# #       - CA_PATH=../certs/ca.crt
+# #     # healthcheck:
+# #     #   test: ["CMD", "nc", "-uz", "localhost", "5004"]
+# #     #   interval: 30s
+# #     #   timeout: 10s
+# #     #   retries: 3
+
+
+
+# #   secure_gateway:
+# #     build: ./secure_gateway
+# #     networks:
+# #       critical_dmz:
+# #         aliases:
+# #           - gateway.dmz.critical
+# #         #ipv4_address: 10.10.2.11
+# #       info_dmz:
+# #         # aliases:
+# #         #   - gateway.dmz.info
+# #         ipv4_address: 10.10.3.10
+# #       #info_internal:
+# #       #  aliases:
+# #       #    - gateway.info.info
+# #     expose:
+# #       - "8083"    # HTTPS для передачи информации
+# #     read_only: true
+# #     #restart: always
+# #     security_opt:
+# #       - no-new-privileges:true
+# #     cap_drop:
+# #       - ALL
+# #     cap_add:
+# #       - NET_BIND_SERVICE
+# #     volumes:
+# #       - ./certs/secure_gateway:/certs:ro
+# #       - ./certs/ca.crt:/certs/
+# #     environment:
+# #       - PYTHONUNBUFFERED=1  # Вывод логов в реальном времени
+# #       - TZ=UTC
+# #       - CERT_PATH=../certs/secure_gateway.crt
+# #       - KEY_PATH=../certs/secure_gateway.key
+# #       - CA_PATH=../certs/ca.crt
+# #     # healthcheck:
+# #     #   test: ["CMD", "wget", "--no-check-certificate", "-q", "https://localhost:8083/health", "-O", "/dev/null"]
+# #     #   interval: 30s
+# #     #   timeout: 10s
+# #     #   retries: 3
+
+# #   info_firewall:
+# #     build:
+# #       context: ./firewalls/info
+# #       dockerfile: Dockerfile
+# #     # networks:
+# #     #   info_internal:
+# #     #     aliases:
+# #     #       - info_firewall.info.local
+# #     #   info_dmz:
+# #     #     aliases:
+# #     #       - info_firewall.dmz.local
+# #       # - info_internal
+# #       # - info_dmz
+# #     networks:
+# #       info_dmz:
+# #         ipv4_address: 10.10.3.11  # Уникальный IP для DMZ
+# #       info_internal:
+# #         ipv4_address: 10.10.4.11  # Уникальный IP для internal
+# #     cap_add:
+# #       - NET_ADMIN
+# #     # sysctls:
+# #     #   net.ipv4.ip_forward: "1"  # Включаем форвардинг
+# #     # volumes:
+# #     #   - ./firewalls/info/info.rules:/rules.v4:ro
+# #     # #restart: always
+# #     # security_opt:
+# #     #   - no-new-privileges:true
+# #     depends_on:
+# #       - crew_communication
+# #       - secure_gateway
+# #     environment:
+# #       - PYTHONUNBUFFERED=1  # Вывод логов в реальном времени
+# #     # image: alpine/firewalld:latest
+# #     # networks:
+# #     #   - info_dmz
+# #     #   - info_internal
+# #     # volumes:
+# #     #   - ./firewall/info_rules.conf:/etc/firewalld/info_rules.conf:ro
+# #     # restart: always
+# #     # security_opt:
+# #     #   - no-new-privileges:true
+
+# #   # ИНФОРМАЦИОННЫЙ ДОМЕН
+# #   crew_communication:
+# #     build: ./crew_communication
+# #     networks:
+# #       #info_internal:
+# #       info_internal:
+# #         ipv4_address: 10.10.4.10
+# #         # aliases:
+# #         #   - crew.info.local
+# #     expose:
+# #       - "8084"    # HTTPS для информационной системы
+# #     #read_only: true
+# #     #restart: always
+# #     # security_opt:
+# #     #   - no-new-privileges:true
+# #     # cap_drop:
+# #     #   - ALL
+# #     cap_add:
+# #       - NET_BIND_SERVICE
+# #     volumes:
+# #       - ./certs/crew_communication:/certs:ro
+# #       - ./certs/ca.crt:/certs/
+# #     environment:
+# #       - PYTHONUNBUFFERED=1  # Вывод логов в реальном времени
+# #       - TZ=UTC
+# #       - CERT_PATH=../certs/crew_communication.crt
+# #       - KEY_PATH=../certs/crew_communication.key
+# #       - CA_PATH=../certs/ca.crt
+# #     # healthcheck:
+# #     #   test: ["CMD", "wget", "--no-check-certificate", "-q", "https://localhost:8084/health", "-O", "/dev/null"]
+# #     #   interval: 30s
+# #     #   timeout: 10s
+# #     #   retries: 3
+
+# # networks:
+# #   # Полностью изолированная внутренняя сеть критического домена
+# #   critical_internal:
+# #     driver: bridge
+# #     internal: true
+# #     name: critical_internal
+# #     ipam:
+# #       config:
+# #         - subnet: 10.10.1.0/24
+  
+# #   # DMZ между критическим доменом и шлюзом безопасности
+# #   critical_dmz:
+# #     driver: bridge
+# #     internal: true
+# #     name: critical_dmz
+# #     ipam:
+# #       config:
+# #         - subnet: 10.10.2.0/24
+  
+# #   # DMZ между информационным доменом и шлюзом безопасности
+# #   info_dmz:
+# #     driver: bridge
+# #     internal: true
+# #     name: info_dmz
+# #     ipam:
+# #       config:
+# #         - subnet: 10.10.3.0/24
+  
+# #   # Внутренняя сеть информационного домена
+# #   info_internal:
+# #     driver: bridge
+# #     internal: true
+# #     name: info_internal
+# #     ipam:
+# #       config:
+# #         - subnet: 10.10.4.0/24

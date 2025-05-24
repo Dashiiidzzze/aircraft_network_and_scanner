@@ -1,6 +1,3 @@
-# Dockerfile
-# Контейнер для исполнительных механизмов
-
 FROM python:3.10-slim
 
 WORKDIR /app

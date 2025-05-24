@@ -1,4 +1,3 @@
-# crew_communication.py
 # Система связи экипажа — принимает и обрабатывает данные от безопасного шлюза
 
 from flask import Flask, request, jsonify
@@ -32,6 +31,5 @@ def receive_data():
 def get_log():
     return jsonify(received_data), 200
 
-# Запуск сервера
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8084)
+    app.run(host="10.10.4.10", port=8084)

@@ -1,0 +1,26 @@
+*filter
+
+# Удаляем все правила
+:INPUT DROP [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+
+# 1. Разрешаем loopback и возвратные соединения к фаерволу
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# 2. Разрешаем ping к фаерволу (опционально)
+-A INPUT -p icmp -j ACCEPT
+
+# 3. Разрешаем HTTP-трафик от avionics (10.10.1.7) через фаервол на secure_gateway (10.10.4.9)
+# направление: avionics --> firewall --> secure_gateway
+-A FORWARD -s 10.10.1.7 -d 10.10.4.9 -p tcp --dport 8083 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+
+# 4. Разрешаем обратный трафик (ответы от secure_gateway к avionics)
+-A FORWARD -s 10.10.4.9 -d 10.10.1.7 -p tcp --sport 8083 -m conntrack --ctstate ESTABLISHED -j ACCEPT
+
+# 5. Разрешаем ICMP для отладки (опционально)
+#-A FORWARD -p icmp -j ACCEPT
+
+# Всё остальное — блокируем
+COMMIT

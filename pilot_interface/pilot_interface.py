@@ -1,4 +1,3 @@
-# pilot_interface.py
 # Имитация интерфейса пилота: приём данных от сенсоров (UDP) и передача команд контроллерам (HTTP)
 
 import socket       # Для UDP-приёма
@@ -8,11 +7,10 @@ import requests     # Для отправки HTTP-запросов
 import time         # Для пауз между автоматическими командами
 import random       # Для генерации случайных значений рулей и тяги
 
-# Конфигурация
 UDP_PORT = 5003                         # Порт для приёма данных от сенсоров
-CONTROLLER_HTTP_URL = "http://controllers:8080/command"  # URL контроллера
+CONTROLLER_HTTP_URL = "https://controllers.critical.local:8080/command"  # URL контроллера
 
-# --- Приём телеметрии по UDP ---
+# Приём телеметрии по UDP
 def listen_to_sensors():
     # Создаем UDP-сокет
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -29,7 +27,7 @@ def listen_to_sensors():
         except json.JSONDecodeError:
             print("[Ошибка] Получены поврежденные данные от сенсоров.")
 
-# --- Отправка команд от пилота контроллерам ---
+# Отправка команд от пилота контроллерам
 def send_pilot_command():
     print("[Панель пилота] Автоматическая генерация команд активирована.")
     while True:
@@ -41,7 +39,7 @@ def send_pilot_command():
 
         print(f"\n[Панель пилота] Отправка команды: {command}")
         try:
-            response = requests.post(CONTROLLER_HTTP_URL, json=command)
+            response = requests.post(CONTROLLER_HTTP_URL, json=command, verify="certs/cert.pem")
             if response.status_code == 200:
                 print("[Pilot Interface] Команда успешно отправлена контроллеру.")
             else:
@@ -49,7 +47,6 @@ def send_pilot_command():
         except requests.exceptions.RequestException as e:
             print(f"[Ошибка сети] Не удалось отправить команду: {e}")
 
-        # Пауза между отправками
         time.sleep(5)  # каждые 5 секунд
 
 

@@ -1,4 +1,3 @@
-# secure_gateway.py
 # Безопасный шлюз между критическим и информационным доменами
 
 from flask import Flask, request, jsonify
@@ -7,11 +6,10 @@ import logging
 
 app = Flask(__name__)
 
-# Конфигурация
-CREW_COMM_URL = "http://crew_communication:8084/receive"
+CREW_COMM_URL = "http://crew.info.local:8084/receive"  # урл для отправки в crew_communication
 ALLOWED_FIELDS = {"altitude", "speed", "status"}  # Допустимые ключи
 
-# Настройка логирования
+# Настройка логированияs
 logging.basicConfig(level=logging.INFO)
 
 # Фильтрация и переадресация
@@ -30,7 +28,7 @@ def ingest():
 
     try:
         # Отправка в информационный домен
-        resp = requests.post(CREW_COMM_URL, json=data)
+        resp = requests.post(CREW_COMM_URL, json=data, verify=False)
         if resp.status_code == 200:
             logging.info("[Gateway] Данные успешно переданы системе экипажа.")
             return jsonify({"status": "OK"}), 200
@@ -42,6 +40,5 @@ def ingest():
         logging.error(f"[Gateway] Исключение при отправке: {e}")
         return jsonify({"error": "Internal error"}), 500
 
-# Запуск сервера
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8083)

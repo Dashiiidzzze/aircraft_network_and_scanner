@@ -1,6 +1,3 @@
-# Dockerfile
-# Контейнер для модуля авионики
-
 FROM python:3.10-slim
 
 WORKDIR /app
