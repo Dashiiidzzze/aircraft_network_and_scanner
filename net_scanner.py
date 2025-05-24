@@ -1,11 +1,10 @@
 import argparse
 import sys
 import os
+import re
 import docker
 import yaml
-from typing import Dict, List, Tuple, Set, Optional, Any
-from concurrent.futures import ThreadPoolExecutor
-import socket
+from typing import Dict, List, Tuple, Set
 import nmap
 from typing import Set, Tuple
 
@@ -23,6 +22,32 @@ EXPECTED_NETWORKS = [
 # Настройки таймаутов
 CONNECTION_TIMEOUT = 2  # секунды
 UDP_TEST_TIMEOUT = 1  # секунды
+
+# Небезопасные базовые образы
+INSECURE_BASE_IMAGES = [
+    'ubuntu:latest',
+    'debian:latest',
+    'centos:latest',
+    'alpine:latest',
+    'node:latest',
+    'python:latest',
+    'nginx:latest'
+]
+
+# Небезопасные команды в Dockerfile
+INSECURE_DOCKERFILE_PATTERNS = [
+    (r'RUN\s+.*wget.*http://', "Использование небезопасного HTTP для загрузки"),
+    (r'RUN\s+.*curl.*http://', "Использование небезопасного HTTP для загрузки"),
+    (r'ADD\s+http://', "Использование небезопасного HTTP в ADD"),
+    (r'RUN\s+.*sudo', "Использование sudo в контейнере"),
+    (r'RUN\s+.*su\s+', "Использование su в контейнере"),
+    (r'RUN\s+.*chmod\s+777', "Установка небезопасных прав доступа 777"),
+    (r'RUN\s+.*chmod\s+\+x\s+/.*', "Широкие права на исполнение"),
+    (r'COPY\s+.*\s+/', "Копирование в корневую директорию"),
+    (r'ADD\s+.*\.tar\.gz\s+/', "Распаковка архивов в корневую директорию"),
+    (r'RUN\s+.*pip\s+install.*--trusted-host', "Установка пакетов из недоверенных источников"),
+    (r'RUN\s+.*npm\s+install.*--unsafe-perm', "Небезопасная установка npm пакетов"),
+]
 
 # Цвета для вывода
 class Colors:
@@ -47,9 +72,11 @@ class Vulnerability_scanner:
         self.network_map = {}                           # Сопоставление сетей -> сервисы
         self.service_configs = {}                       # Конфигурации сервисов из compose-файла
         self.services_running = set()                   # Множество запущенных контейнеров (по именам)
+        self.dockerfile_paths = {}                      # Пути к Dockerfile'ам для каждого сервиса
 
         self.load_compose_file()                        # Загружаем и парсим docker-compose.yml
         self.map_networks()                             # Формируем сетевую карту сервисов
+        self.find_dockerfiles()                         # Находим Dockerfile'ы для сервисов
 
     # Загружает и анализирует docker-compose файл
     def load_compose_file(self) -> None:
@@ -67,6 +94,34 @@ class Vulnerability_scanner:
             self.log_error(f"Ошибка при загрузке docker-compose файла: {str(e)}")
             sys.exit(1)
     
+    # Находит Dockerfile'ы для каждого сервиса
+    def find_dockerfiles(self) -> None:
+        base_dir = os.path.dirname(os.path.abspath(self.compose_file))
+        
+        for service_name, service_config in self.service_configs.items():
+            dockerfile_path = None
+            
+            # Проверяем build context
+            build_config = service_config.get('build', {})
+            if isinstance(build_config, str):
+                # build: ./path
+                context_path = os.path.join(base_dir, build_config)
+                dockerfile_path = os.path.join(context_path, 'Dockerfile')
+            elif isinstance(build_config, dict):
+                # build:
+                #   context: ./path
+                #   dockerfile: CustomDockerfile
+                context = build_config.get('context', '.')
+                dockerfile = build_config.get('dockerfile', 'Dockerfile')
+                context_path = os.path.join(base_dir, context)
+                dockerfile_path = os.path.join(context_path, dockerfile)
+            
+            if dockerfile_path and os.path.isfile(dockerfile_path):
+                self.dockerfile_paths[service_name] = dockerfile_path
+                self.log_info(f"Найден Dockerfile для {service_name}: {dockerfile_path}")
+            else:
+                self.log_info(f"Dockerfile не найден для {service_name} (используется готовый образ)")
+
     # Сопоставляет сервисы с сетями из docker-compose файла
     def map_networks(self) -> None:
         networks_section = self.compose_config.get('networks', {})
@@ -124,6 +179,9 @@ class Vulnerability_scanner:
         # # Сканирование конфигурационных файлов
         self.scan_config_files()
         
+        # # Сканирование Dockerfile'ов
+        self.scan_dockerfiles()
+        
         # # Сканирование сетевой топологии
         self.scan_network_topology()
         
@@ -131,13 +189,16 @@ class Vulnerability_scanner:
         self.scan_container_vulnerabilities()
         
         # # Сканирование портов
-        # self.scan_open_ports()
+        self.scan_open_ports()
         
         # # Проверка защищенности коммуникаций
         self.check_secure_communications()
         
         # # Проверка разделения сетей
         self.check_network_segregation()
+        
+        # # Проверка секретов и переменных окружения
+        self.check_secrets_and_env()
         
         self.log_header("ЗАВЕРШЕНО СКАНИРОВАНИЕ УЯЗВИМОСТЕЙ")
         self.print_summary()
@@ -286,7 +347,129 @@ class Vulnerability_scanner:
                         "HIGH"
                     )
 
-    # Проверяет правильность сетевой топологии системы
+    # сканирование Dockerfile'ов
+    def scan_dockerfiles(self) -> None:
+        self.log_info("Сканирование Dockerfile'ов на уязвимости...")
+        
+        for service_name, dockerfile_path in self.dockerfile_paths.items():
+            self.log_info(f"Анализ Dockerfile для сервиса {service_name}")
+            
+            try:
+                with open(dockerfile_path, 'r', encoding='utf-8') as f:
+                    dockerfile_content = f.read()
+                
+                self.analyze_dockerfile_content(service_name, dockerfile_content)
+                
+            except Exception as e:
+                self.log_error(f"Ошибка при чтении Dockerfile для {service_name}: {str(e)}")
+
+    def analyze_dockerfile_content(self, service_name: str, content: str) -> None:
+        lines = content.split('\n')
+        
+        # Проверка базового образа
+        from_lines = [line.strip() for line in lines if line.strip().upper().startswith('FROM')]
+        
+        for from_line in from_lines:
+            base_image = from_line.split()[1] if len(from_line.split()) > 1 else ""
+            
+            # Проверка на небезопасные базовые образы
+            for insecure_image in INSECURE_BASE_IMAGES:
+                if base_image.startswith(insecure_image.split(':')[0]) and ':latest' in base_image:
+                    self.add_vulnerability(
+                        service_name,
+                        f"Использование небезопасного базового образа с тегом latest: {base_image}",
+                        "HIGH"
+                    )
+                elif base_image == insecure_image:
+                    self.add_vulnerability(
+                        service_name,
+                        f"Использование базового образа без указания версии: {base_image}",
+                        "MEDIUM"
+                    )
+        
+        # Проверка на ROOT пользователя
+        user_lines = [line.strip() for line in lines if line.strip().upper().startswith('USER')]
+        if not user_lines:
+            self.add_vulnerability(
+                service_name,
+                "Отсутствует инструкция USER - контейнер будет работать от root",
+                "HIGH"
+            )
+        else:
+            # Проверяем последнюю USER инструкцию
+            last_user = user_lines[-1].split()[1] if len(user_lines[-1].split()) > 1 else ""
+            if last_user in ['root', '0']:
+                self.add_vulnerability(
+                    service_name,
+                    "Контейнер настроен для работы от пользователя root",
+                    "HIGH"
+                )
+
+        # Проверка небезопасных паттернов
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            
+            for pattern, description in INSECURE_DOCKERFILE_PATTERNS:
+                if re.search(pattern, line, re.IGNORECASE):
+                    self.add_vulnerability(
+                        service_name,
+                        f"{description} (строка {line_num}): {line[:100]}",
+                        "MEDIUM" if "chmod 777" in pattern else "HIGH"
+                    )
+        
+        # Проверка на отсутствие HEALTHCHECK
+        # healthcheck_lines = [line for line in lines if line.strip().upper().startswith('HEALTHCHECK')]
+        # if not healthcheck_lines and service_name in CRITICAL_SERVICES:
+        #     self.add_vulnerability(
+        #         service_name,
+        #         "Отсутствует HEALTHCHECK инструкция для критического сервиса",
+        #         "MEDIUM"
+        #     )
+        
+        # Проверка COPY/ADD с широкими правами
+        copy_add_lines = [line.strip() for line in lines 
+                         if line.strip().upper().startswith(('COPY', 'ADD'))]
+        
+        for line in copy_add_lines:
+            if '--chown=root:root' in line or '--chown=0:0' in line:
+                self.add_vulnerability(
+                    service_name,
+                    f"Копирование файлов с правами root: {line[:100]}",
+                    "MEDIUM"
+                )
+        
+        # Проверка на использование SHELL формы вместо EXEC
+        cmd_lines = [line.strip() for line in lines 
+                    if line.strip().upper().startswith(('RUN', 'CMD', 'ENTRYPOINT'))]
+        
+        for line in cmd_lines:
+            # Проверяем, используется ли shell форма (без квадратных скобок)
+            if not re.search(r'\[.*\]', line) and ('&&' in line or '|' in line):
+                if line.upper().startswith('RUN') and len(line.split('&&')) > 3:
+                    self.add_vulnerability(
+                        service_name,
+                        f"Сложная RUN инструкция может усложнить отладку: {line[:100]}",
+                        "LOW"
+                    )
+
+        # Проверка на кэширование пакетных менеджеров
+        package_manager_patterns = [
+            (r'RUN.*apt-get.*install', r'apt-get.*clean', "apt-get clean"),
+            (r'RUN.*yum.*install', r'yum.*clean', "yum clean"),
+            (r'RUN.*apk.*add', r'--no-cache', "apk --no-cache")
+        ]
+        
+        content_lower = content.lower()
+        for install_pattern, clean_pattern, clean_cmd in package_manager_patterns:
+            if re.search(install_pattern, content_lower):
+                if not re.search(clean_pattern, content_lower):
+                    self.add_vulnerability(
+                        service_name,
+                        f"Отсутствует очистка кэша пакетного менеджера ({clean_cmd})",
+                        "LOW"
+                    )
+
+     # Проверяет правильность сетевой топологии системы
     def scan_network_topology(self) -> None:
         self.log_info("Сканирование сетевой топологии...")
         
@@ -582,6 +765,77 @@ class Vulnerability_scanner:
                     "Не определена подсеть (subnet) для сети, что может привести к конфликтам IP адресов",
                     "MEDIUM"
                 )
+
+    # проверка секретов и переменных окружения
+    def check_secrets_and_env(self) -> None:
+        self.log_info("Проверка секретов и переменных окружения...")
+        
+        # Паттерны для поиска потенциальных секретов
+        secret_patterns = [
+            (r'password\s*=\s*["\'][^"\']{8,}["\']', "Потенциальный пароль в открытом виде"),
+            (r'api[_-]?key\s*=\s*["\'][^"\']{20,}["\']', "Потенциальный API ключ в открытом виде"),
+            (r'secret[_-]?key\s*=\s*["\'][^"\']{16,}["\']', "Потенциальный секретный ключ в открытом виде"),
+            (r'token\s*=\s*["\'][^"\']{20,}["\']', "Потенциальный токен в открытом виде"),
+            (r'private[_-]?key\s*=\s*["\']-----BEGIN', "Приватный ключ в открытом виде"),
+        ]
+        
+        for service_name, service_config in self.service_configs.items():
+            env_vars = service_config.get('environment', [])
+            
+            # Проверка переменных окружения
+            for env in env_vars:
+                if isinstance(env, str):
+                    env_lower = env.lower()
+                    
+                    # Поиск потенциальных секретов
+                    for pattern, description in secret_patterns:
+                        if re.search(pattern, env_lower):
+                            self.add_vulnerability(
+                                service_name,
+                                f"{description}: {env.split('=')[0]}",
+                                "HIGH"
+                            )
+                    
+                    # Проверка на отладочные переменные в продакшене
+                    debug_vars = ['debug=true', 'debug=1', 'dev_mode=true', 'development=true']
+                    if any(debug_var in env_lower for debug_var in debug_vars):
+                        self.add_vulnerability(
+                            service_name,
+                            f"Обнаружена отладочная переменная окружения: {env.split('=')[0]}",
+                            "MEDIUM"
+                        )
+            
+            # Проверка использования .env файлов
+            env_file = service_config.get('env_file')
+            if env_file:
+                env_file_path = os.path.join(os.path.dirname(self.compose_file), env_file)
+                if os.path.exists(env_file_path):
+                    try:
+                        with open(env_file_path, 'r') as f:
+                            env_content = f.read()
+                        
+                        # Проверка прав доступа к .env файлу
+                        file_stat = os.stat(env_file_path)
+                        file_mode = oct(file_stat.st_mode)[-3:]
+                        
+                        if file_mode != '600':
+                            self.add_vulnerability(
+                                service_name,
+                                f"Небезопасные права доступа к .env файлу ({file_mode}), должно быть 600",
+                                "HIGH"
+                            )
+                        
+                        # Проверка содержимого .env файла
+                        for pattern, description in secret_patterns:
+                            if re.search(pattern, env_content, re.IGNORECASE):
+                                self.add_vulnerability(
+                                    service_name,
+                                    f"{description} в .env файле",
+                                    "HIGH"
+                                )
+                    except Exception as e:
+                        self.log_error(f"Ошибка при чтении .env файла для {service_name}: {str(e)}")
+
 
     # Выводит итоговую сводку по найденным уязвимостям
     def print_summary(self) -> None:
