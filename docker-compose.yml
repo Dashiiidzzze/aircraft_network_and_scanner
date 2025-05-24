@@ -38,11 +38,12 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    cap_drop:
-      - ALL
+    # cap_drop:
+    #   - ALL
     security_opt:
       - no-new-privileges:true
     volumes:
+      - ./controllers/certs:/app/certs:ro
       - /proc:/host_proc  # ← уязвимость
       - /var/run/docker.sock:/var/run/docker.sock  # ← особенно опасно
     #restart: always
@@ -89,6 +90,10 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    environment:
+      - CERT_PATH=/app/certs/cert.pem
+    volumes:
+      - ./pilot_interface/certs:/app/certs:ro
     #restart: always
 
   avionics:
